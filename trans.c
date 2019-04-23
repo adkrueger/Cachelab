@@ -1,3 +1,9 @@
+/*
+ * Authors:
+ * Aaron Krueger (adkrueger)
+ * Theo Campbell (tjcampbell)
+ */
+
 /* 
  * trans.c - Matrix transpose B = A^T
  *
