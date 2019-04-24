@@ -38,19 +38,17 @@ typedef struct cache {
 cacheInfo processCache(Cache* cache, cacheInfo info, unsigned long long address, int verbose) {
 	int evictIndex;
 	int minLRU;
-	unsigned long long tag = address >> (info.s + info.b);
-	unsigned long long setNum = (address >> info.b) & (info.S - 1);
+	unsigned long long tag = address >> (info.s + info.b); // find the tag (which is shifted over by s and b to be comparable to our tag)
+	unsigned long long setNum = (address >> info.b) & (info.S - 1); // find the appropriate number of the set
 	cacheSet currSet = cache->sets[setNum];
 
 	for(int i = 0; i < info.E; i++) {
 		cacheLine currLine = currSet.lines[i];
-		if(currLine.valid) { // if the line we're examining is valid
-			if(currLine.tag == tag) {
-				info.numHits++;
-				currLine.LRU++;
-				if(verbose) { printf("hit "); }
-				return info;
-			}
+		if(currLine.valid && currLine.tag == tag) { // if the line we're examining is valid
+			info.numHits++;
+			currLine.LRU++;
+			if(verbose) { printf("hit "); }
+			return info;
 		}
 	}
 
@@ -75,12 +73,11 @@ cacheInfo processCache(Cache* cache, cacheInfo info, unsigned long long address,
 		info.numEvicts++;
 		if(verbose) { printf("eviction "); }
 	}
-	return info;
 
 	cache->sets[setNum].lines[evictIndex].valid = 1;
 	cache->sets[setNum].lines[evictIndex].tag = tag;
 	cache->sets[setNum].lines[evictIndex].LRU = 0;
-
+	return info;
 }
 
 cacheInfo processFile(Cache* cache, cacheInfo info, int verbose, char* file) {
@@ -98,7 +95,7 @@ cacheInfo processFile(Cache* cache, cacheInfo info, int verbose, char* file) {
 		if(c == 'M' || c == 'L' || c == 'S') {
 			fscanf(fp, " %c %llx,%u", &c, &address, &len);
 
-			if(verbose != 0) { printf("%c %llx,%u\n", c, address, len); }
+			if(verbose) { printf("%c %llx,%u\n", c, address, len); }
 			if(c == 'M') { // if we have a miss, we need to process the info twice to move info back into the cache
 				info = processCache(cache, info, address, verbose);
 				info = processCache(cache, info, address, verbose);
@@ -109,7 +106,7 @@ cacheInfo processFile(Cache* cache, cacheInfo info, int verbose, char* file) {
 
 		}
 	}
-
+    fclose(fp);
 	return info;
 }
 
@@ -140,7 +137,6 @@ Cache* newCache(cacheInfo info) {
 			lines[j].valid = 0;
 			lines[j].tag = 0;
 			lines[j].LRU = 0;
-
 		}
 	}
 
