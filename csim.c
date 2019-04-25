@@ -19,7 +19,6 @@ typedef struct info {
 	int s; // 2^s sets
 	int B; // the bytes in the cache "payload"
 	int b; // 2^e bytes per block
-	int maxLRU;
 } cacheInfo;
 
 typedef struct line {
@@ -36,24 +35,37 @@ typedef struct cache {
 	cacheSet* sets; // and caches are made up of sets
 } Cache;
 
-int findEvictIndex(cacheSet currSet, cacheInfo info) {
-	int evictIndex;
-	int minLRU;
+/**
+ * A method to check for the index of the line we want to evict
+ */
+int findEvictIndex(cacheSet currSet, cacheInfo info, int* maxLRU) {
+	int evictIndex = 0;
+	int minLRU = currSet.lines[0].LRU;
+	*maxLRU = currSet.lines[0].LRU;
+
 	for(int i = 0; i < info.E; i++) {
-		cacheLine currLine = currSet.lines[i];
-		if(i != 0) {
-			if(minLRU > currLine.LRU) { // if we've found a line that's less than the minimum
-				minLRU = currLine.LRU;
-				evictIndex = i;
-			}
+		if(currSet.lines[i].LRU < minLRU) { // if we've found a line that's less than the minimum
+			minLRU = currSet.lines[i].LRU;
+			evictIndex = i; // set the evictIndex so we know which line to evict
 		}
-		else { // set the minimum LRU to the first index we look at
-			minLRU = currLine.LRU;
-			evictIndex = i;
+		if(*maxLRU < currSet.lines[i].LRU) { // make sure our maximum LRU value is properly updated
+			*maxLRU = currSet.lines[i].LRU;
 		}
 	}
 
 	return evictIndex;
+}
+
+/**
+ * A simple method that checks to see if any line is invalid (AKA empty) and returns that index
+ */
+int findEmptyIndex(cacheSet currSet, cacheInfo info) {
+	for(int i = 0; i < info.E; i++) {
+		if(!currSet.lines[i].valid) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 /*
@@ -61,42 +73,46 @@ int findEvictIndex(cacheSet currSet, cacheInfo info) {
  */
 cacheInfo processCache(Cache* cache, cacheInfo info, unsigned long long address, int verbose) {
 	unsigned long long tag = address >> (info.s + info.b); // find the tag (which is shifted over by s and b to be comparable to our tag)
-	unsigned long long setNum = (address >> info.b) & (info.S - 1); // find the appropriate number of the set
-	cacheSet currSet = cache->sets[setNum];
-	int evictIndex;
+	unsigned long long setNum = (address << (64 - info.s - info.b)) >> (64 - info.s); // find the appropriate number of the set (found this equation from lab)
+	cacheSet currSet = cache->sets[setNum]; // the current set we're looking at
+	int evictIndex, emptyIndex;
 
 	for(int i = 0; i < info.E; i++) {
-		cacheLine currLine = currSet.lines[i];
-		if(currLine.valid && currLine.tag == tag) { // if the line we're examining is valid and the tag matches, then hit
+		if(currSet.lines[i].valid && currSet.lines[i].tag == tag) { // if the line we're examining is valid and the tag matches, then hit
+			info.numHits++; // update the number of hits
 			if(verbose) { printf("hit "); }
-			info.numHits++;
-			currLine.LRU++; // increment LRU because we've used this value again
-			if(currLine.LRU > info.maxLRU) { info.maxLRU = currLine.LRU; }
+			currSet.lines[i].LRU++; // update the LRU value of this line
 			return info;
 		}
 	}
 
-	if(verbose) { printf("miss "); }
 	info.numMisses++; // if we've made it to this point, we know there wasn't a hit and we missed
+	if(verbose) { printf("miss "); }
 
-	// find the lines[] index of the line we are going to evict
-	evictIndex = findEvictIndex(currSet, info);
+	// check to see if there are any empty indices
+	int* maxLRU = (int*) malloc(sizeof(int*)); // need to create a pointer so we can update our max LRU value in the same function that we find the evictIndex in
+	evictIndex = findEvictIndex(currSet, info, maxLRU);
+	int actualLRU = *maxLRU + 1; // maxLRU will now hold the highest LRU in the table
+	free(maxLRU); // don't need maxLRU anymore so we can free it
+	emptyIndex = findEmptyIndex(currSet, info);
 
-	// if the line we are going to evict is valid, then increase the number of evictions
-	if(currSet.lines[evictIndex].valid) {
+	if(emptyIndex == -1) { // if there is no empty space (cache is full), we must evict
+		info.numEvicts++; // update the number of evictions
 		if(verbose) { printf("eviction "); }
-		info.numEvicts++;
-	}
 
-	// set the info of the line to be properly evicted
-	currSet.lines[evictIndex].valid = 1; // set validity to 1 (as we now know for sure that this line is valid)
-	currSet.lines[evictIndex].tag = tag; // set the tag
-	currSet.lines[evictIndex].LRU = info.maxLRU; // need to set to the maxLRU because this is now the most recently used line
+		currSet.lines[evictIndex].tag = tag; // set the tag
+		currSet.lines[evictIndex].LRU = actualLRU; // need to set to the maxLRU + 1 because this is now the most recently used line
+	}
+	else { // if cache is not full (we found an empty line)
+		currSet.lines[emptyIndex].valid = 1; // set validity to 1 (as we now know for sure that this line is valid)
+		currSet.lines[emptyIndex].tag = tag; // set the tag
+		currSet.lines[emptyIndex].LRU = actualLRU; // need to set to the maxLRU because this is now the most recently used line
+	}
 
 	return info;
 }
 
-/*
+/**
  * Process the file's input and run processCache according to the trace file
  */
 cacheInfo processFile(Cache* cache, cacheInfo info, int verbose, char* file) {
@@ -113,16 +129,17 @@ cacheInfo processFile(Cache* cache, cacheInfo info, int verbose, char* file) {
 		unsigned long long address = 0; // the address in the trace file given by valgrind
 		unsigned int len = 0; // the length given by valgrind
 		sscanf(s, " %c %llx,%u", &c, &address, &len); // initialize  each variable to what we have in the trace file
-
-		if(verbose && c != 'I') { printf("%c %llx,%u ", c, address, len); }
-		if(c == 'M') { // if we have a miss, we need to process the info twice to move info back into the cache
-			info = processCache(cache, info, address, verbose);
-			info = processCache(cache, info, address, verbose);
+		if(c != 'I') {
+			if(verbose) { printf("%c %llx,%u ", c, address, len); }
+			if(c == 'M') { // if we have a miss, we need to process the info twice to move info back into the cache
+				info = processCache(cache, info, address, verbose);
+				info = processCache(cache, info, address, verbose);
+			}
+			else if(c == 'L' || c == 'S') {  // otherwise, all we have to do is process cache once
+				info = processCache(cache, info, address, verbose);
+			}
+			if(verbose) { printf("\n"); }
 		}
-		else if(c == 'L' || c == 'S') {  // otherwise, all we have to do is process cache once
-			info = processCache(cache, info, address, verbose);
-		}
-		if(verbose && c != 'I') { printf("\n"); }
 	}
 	fclose(fp);
 	return info;
@@ -166,6 +183,17 @@ Cache* newCache(cacheInfo info) {
 	return cache;
 }
 
+/**
+ * make sure to free all pointers in the Cache
+ */
+void cleanCache(Cache* cache, cacheInfo info) {
+	for(int i = 0; i < info.S; i++) {
+		free(cache->sets[i].lines);
+	}
+	free(cache->sets);
+	free(cache);
+}
+
 int main(int argc, char* argv[]) {
 	cacheInfo info;
 	Cache* cache;
@@ -206,11 +234,10 @@ int main(int argc, char* argv[]) {
 	info.numEvicts = 0; //
 	info.numHits = 0;   // reset each counter to 0
 	info.numMisses = 0; //
-	info.maxLRU = 0;
 
 	cache = newCache(info);
-	info = processFile(cache, info, verbose, file);
-
+	info = processFile(cache, info, verbose, file); // read the file and subsequently run the simulation
+	cleanCache(cache, info);
 
 	printSummary(info.numHits, info.numMisses, info.numEvicts);
 	return 0;
