@@ -29,34 +29,35 @@ char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
 	int i,j, rblock, cblock, temp;
+
 	int diag = 0;
-	if(N==32){
-		for( rblock = 0; rblock < 32;rblock +=8){
+	if(N==32 && M== 32){ // checks if it is the 32 by 32 case
+		for( rblock = 0; rblock < 32;rblock +=8){//blocks out the data
 			for( cblock =0; cblock < 32;cblock +=8){
-				for( i = rblock;i < rblock+8; i++){
+				for( i = rblock;i < rblock+8; i++){//goes through the blocks of data
 					for(j= cblock;j < cblock +8; j++){
-						if(i==j){
-							diag =A[i][i];
+						if(i==j){//checks to see if it is on the diagonal
+							diag =A[i][i]; //sets temporary variable
 						}
-						else B[j][i]=A[i][j];
+						else B[j][i]=A[i][j];//transposes otherwise
 					}
-					if(rblock==cblock){
+					if(rblock==cblock){//checks to see if it needs to set the diagonal
 						B[i][i]=diag;
 					}
 				}
 			}
 		}
 	}
-	else{
+	else if(N==67 && M==61){//for all other cases
 
-		for( cblock = 0; cblock < M;cblock +=8){
+		for( cblock = 0; cblock < M;cblock +=8){//blocks out the data
 			for( rblock =0; rblock < N;rblock +=8){
-				for( i = rblock;(i < rblock+8) && (i < N); i++){
-					for(j= cblock;(j < cblock +8) && (j<M); j++){
-						if(i!=j){
-							B[j][i]=A[i][j];
+				for( i = rblock;(i < rblock+8) && (i < N); i++){// goes through the data blocks
+					for(j= cblock;(j < cblock +8) && (j<M); j++){//checks to see if the is enough space to keep going
+						if(i!=j){ //checks and see if on the diagonal
+							B[j][i]=A[i][j];//transpose if not on diagonal
 						}
-						else if(rblock==cblock){
+						else if(rblock==cblock){// uses temporary variable if on the diagonal
 							temp = A[i][j];
 							B[i][j] = temp;
 						}
